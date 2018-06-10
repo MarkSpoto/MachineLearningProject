@@ -1,0 +1,233 @@
+---
+title: "Machine Learning Project (Coursera)"
+author: "Mark S Spoto"
+date: "June 10, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+#setwd("c:/Coursera/MachineLearning/project")
+packages <- c("lubridate", "dplyr", "ggplot2", "RColorBrewer", "VIM", "grid", "gridExtra", "AppliedPredictiveModeling", "caret", "RGtk2", "rattle","gbm","elasticnet","rpart")
+if (length(setdiff(packages, rownames(installed.packages()))) > 0) {
+  install.packages(setdiff(packages, rownames(installed.packages())), repos = "http://cran.us.r-project.org")  
+}
+```
+## Executive Summary
+
+### Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+### Summary of Analysis
+
+This report provides an analysis and exploration on how well the accelerometers on the belt, forearm, arm and dumbell of 6 participants did in classifying whether the lifts were performed correctly or incorrectly.  All data and information about the data sets is available from the website here: http://groupware.les.inf.puc-rio.br/har.  Methods of analysis included non-linear regression modeling, cross validation and a validation test set.  All supporting plots for the analysis are found within the analysis.
+
+**Classifying Definitions**
+
+\setlength{\leftskip}{1cm}
+
+A - Exactly according to the specification  
+B - Throwing the elbows to the front  
+C - Lifting the dumbbell only halfway  
+D - Lowering the dumbbell only halfway  
+E - Throwing the hips to the front  
+
+\setlength{\leftskip}{0cm}
+
+This report analyzes key multi predictors variables used for quantifying how well they performed the routine.  Any variable which did not have a direct coorelation or was missing a significant of data was eliminated from the feature set.  The non-linear regression models used included the Recursive Partition, Random Forest and Gradient Boosting.
+
+Results of the data analysis showed that Random Forest had the best accuracy rating of **99.2%** with a p-value of 2.2e-16 while Gradient Boosting had an estimated accuracy rating of 96.1% with a p-value of 2.2e-16, and Recursive Partition having an estimated accuracy rating of 49% with a p-value of 1.0 for classifying the quantification on how well the participants do the routines.  When testing the validation test data against the models, both the Random Forest and Gradient Boosting were 100% accurate.  Further analysis will need to continue to determine if there are any linear relationships between the variables or if variables can be combined for increasing the accuracy.
+
+## Project Contraints
+
+R version 3.4.4
+
+### Libraries
+
+caret 6.0.80  
+dplyr 0.7.4  
+elasticnet 1.1  
+gbm 2.1.3  
+ggplot2 2.2.1  
+rattle 5.1.0  
+rpart 4.1.13
+
+```{r warning=FALSE, error=FALSE, message=FALSE}
+library(dplyr)
+library(AppliedPredictiveModeling)
+library(caret)
+library(RGtk2)
+library(rattle)
+library(rpart)
+library(rpart.plot)
+```
+
+## Data Extraction and Transformation
+
+### Data Load
+
+Data was downloaded from Cousera's and stored with the project for reproducing the current analysis.  The original data sets were downloaded from the following locations:
+
+Training Data: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+Validation Test Data: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+```{r warning=FALSE, error=FALSE}
+raw_trainingData <- read.csv("./pml-training.csv", sep = ",", header = TRUE, fill = TRUE)
+raw_testingData <- read.csv("./pml-testing.csv", sep = ",", header = TRUE, fill = TRUE)
+
+dim(raw_trainingData); dim(raw_testingData)
+```
+
+### Clean and Transform
+
+```{r warning=FALSE, error=FALSE}
+usefulFeatures <- !(names(raw_trainingData) %in% c("X", "user_name","raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_windows", "num_window"))
+trainingData <- raw_trainingData[,usefulFeatures]
+testingData <- raw_testingData[,usefulFeatures]
+
+nonZeroPredictors <- nearZeroVar(trainingData, saveMetrics = TRUE)
+trainingData = trainingData[,nonZeroPredictors$nzv==FALSE]
+testingData = testingData[,nonZeroPredictors$nzv==FALSE]
+
+usefulFeatures <- !(names(trainingData) %in% colnames(trainingData)[colSums(is.na(trainingData)) >= 0.65])
+trainingData <- trainingData[,usefulFeatures]
+testingData <- testingData[,usefulFeatures]
+
+dim(trainingData); dim(testingData)
+```
+
+```{r warning=FALSE, error=FALSE}
+# Set features (aka predictors, responses)
+features <- colnames(trainingData)
+features
+
+# Frequency count of data points
+summary(trainingData$classe)
+
+# Set the seed for reproduciblility
+set.seed(50342)
+```
+## Training the Model
+
+### Split Data into Training and Testing using Random Splitting
+```{r warning=FALSE, error=FALSE}
+inTrain <- createDataPartition(y=trainingData$classe, p=0.70, list=FALSE)
+training <- trainingData[inTrain,]
+testing <- trainingData[-inTrain,]
+
+dim(training); dim(testing)
+
+# Frequency counts of data points
+summary(training$classe)
+summary(testing$classe)
+```
+
+Define the training controls for use with cross validation.  A k-fold of 5 was selected based on an accumlation of speed and accuracy.
+Additional k-folds could be selected but the speed to train the model does not quantify the small increase in accuracy.  
+
+```{r warning=FALSE, error=FALSE}
+trainControl <- trainControl(method="cv", number=5)
+```
+
+### Train the model using Recursive Partitioning (rpart) for building classification
+
+```{r cachedRpart, warning=FALSE, error=FALSE, message=FALSE, cache=TRUE}
+modelRpart <- train(classe ~ .,data=training, method="rpart", trControl=trainControl)
+```
+
+```{r warning=FALSE, error=FALSE, message=FALSE}
+fancyRpartPlot(modelRpart$finalModel)
+
+predictedByRpart <- predict(modelRpart, newdata=testing)
+
+varImp(modelRpart)
+confMatRpart <- confusionMatrix(testing$classe, predictedByRpart)
+confMatRpart
+```
+
+The overall accuracy for Recursive Partitioning is **`r confMatRpart$overall[1]`** with a p-value of **`r confMatRpart$overall[6]`** 
+and a classification error **`r 1-confMatRpart$overall[1]`**
+
+### Train the model using Random Forest 
+
+```{r cachedRf, warning=FALSE, error=FALSE, message=FALSE, cache=TRUE}
+modelRf <- train(classe ~ .,data=training, method="rf", trControl=trainControl, verbose=FALSE)
+```
+
+```{r warning=FALSE, error=FALSE, message=FALSE}
+predictedByRf <- predict(modelRf, newdata=testing)
+
+varImp(modelRf)
+confMatRf <- confusionMatrix(testing$classe, predictedByRf)
+confMatRf
+```
+
+```{r randomforest, warning=FALSE, error=FALSE}
+plot(modelRf$finalModel, main="Model Error for Random Forest")
+```
+
+The overall accuracy for Random Forest is **`r confMatRf$overall[1]`** and a classification error **`r 1-confMatRf$overall[1]`**
+
+### Train the model using Gradient Boosting
+
+```{r cachedBoosting, warning=FALSE, error=FALSE, message=FALSE, cache=TRUE}
+modelBoosting <- train(classe ~ .,data=training, method="gbm", trControl=trainControl, verbose=FALSE)
+```
+
+```{r warning=FALSE, error=FALSE, message=FALSE}
+predictedByBoosting <- predict(modelBoosting, newdata=testing)
+
+#varImp(modelBoosting)
+confMatBoosting <- confusionMatrix(testing$classe, predictedByBoosting)
+confMatBoosting
+```
+
+The overall accuracy for Gradient Boosting is **`r confMatBoosting$overall[1]`** and a classification error **`r 1-confMatBoosting$overall[1]`**
+
+## Validate the Model
+
+The validation test data containing 20 rows is provided for validating the accuracy of the models
+
+```{r warning=FALSE, error=FALSE, message=FALSE}
+validationTest <- raw_testingData[,(names(raw_testingData) %in% features)]
+
+validationPredictionRf <- predict(modelRf, newdata=validationTest, type="raw")
+validationPredictionRfProbability <- predict(modelRf, newdata=validationTest, type="prob")
+
+validationPredictionBoosting <- predict(modelBoosting, newdata=validationTest, type="raw")
+validationPredictionBoostingProbablity <- predict(modelBoosting, newdata=validationTest, type="prob")
+
+
+validationPredictionRpart <- predict(modelRpart, newdata=validationTest, type="raw")
+validationPredictionRpartProbility <- predict(modelRpart, newdata=validationTest, type="prob")
+```
+
+### Predictions by each of the models in order of accuracy
+
+#### Random Forest 
+```{r warning=FALSE, error=FALSE, message=FALSE}
+validationPredictionRf
+```
+
+#### Gradient Boosting
+```{r warning=FALSE, error=FALSE, message=FALSE}
+validationPredictionBoosting
+```
+
+#### Recursive Partitioning
+```{r warning=FALSE, error=FALSE, message=FALSE}
+validationPredictionRpart
+```
+
+
+#### Random Forest Probility for classifying
+```{r warning=FALSE, error=FALSE, message=FALSE}
+validationPredictionRfProbability
+```
+
+
